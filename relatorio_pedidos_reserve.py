@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import io
+import xlsxwriter 
 import base64
 
 # --- 1. Configurações e Variáveis ---
@@ -15,22 +16,18 @@ BASE_FILE = 'base.csv'
 SEPARATOR = ',' 
 
 # ----------------------------------------------------
-# Funções de Criação do Arquivo Excel (Apenas Dados)
+# Funções de Criação do Arquivo Excel Interativo (Mantida)
 # ----------------------------------------------------
 
 def to_excel(df):
-    """Converte o DataFrame para um buffer de memória XLSX."""
+    """Converte o DataFrame para um buffer de memória XLSX (Dados Brutos)."""
     output = io.BytesIO()
-    # Usando o Pandas para exportar para XLSX é mais estável
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        # Exporta apenas os dados únicos (fonte para a Pivot)
         df.to_excel(writer, sheet_name='Dados', index=False)
-    
-    # Retorna o conteúdo binário
     return output.getvalue()
 
 # ----------------------------------------------------
-# Leitura e Pré-Processamento (Cache Otimizado)
+# Leitura e Pré-Processamento (Cache Otimizado) (Mantida)
 # ----------------------------------------------------
 
 @st.cache_data
@@ -46,7 +43,6 @@ def load_and_clean_data():
             encoding='utf-8'
         )
         
-        # Limpeza e criação de chaves
         df[ID_COL_NAME] = df[ID_COL_NAME].astype(str).str.strip()
         df[EMP_COL_NAME] = df[EMP_COL_NAME].astype(str).str.strip()
         df[GROUP_COL_NAME] = df[GROUP_COL_NAME].astype(str).str.strip().replace(['', 'nan', 'NaN'], np.nan) 
@@ -59,14 +55,12 @@ def load_and_clean_data():
         df['Entidade de Consolidação'] = df[GROUP_COL_NAME].fillna(df[EMP_COL_NAME])
         df['Mês/Ano'] = df[DATE_COL_NAME].dt.strftime('%m/%Y')
         
-        # Contagem Única (PKI)
         df_pedidos_unicos = df.groupby(ID_COL_NAME).agg(
             {'Entidade de Consolidação': 'first', 'Mês/Ano': 'first'}
         ).reset_index()
 
         df_pedidos_unicos['PKI Pedidos'] = 1 
         
-        # DataFrame final de base (somente colunas relevantes para a pivot)
         df_base_pivot = df_pedidos_unicos[['Entidade de Consolidação', 'Mês/Ano', 'PKI Pedidos']]
         
         return df_base_pivot
@@ -88,9 +82,7 @@ df_base_pivot = load_and_clean_data()
 
 if df_base_pivot is not None:
     
-    # Geração do Título Dinâmico (omissão para brevidade)
-    # [Restante do código de filtros e exibição na tela...]
-    
+    # Geração do Título Dinâmico
     min_date = df_base_pivot['Mês/Ano'].min()
     max_date = df_base_pivot['Mês/Ano'].max()
     dashboard_title = f"Pedidos Reserve - Período {min_date} a {max_date}"
@@ -99,7 +91,7 @@ if df_base_pivot is not None:
     st.markdown(f"### {dashboard_title}")
     st.markdown("---")
     
-    # --- FILTROS STREAMLIT NATIVOS (OMITIDO PARA BREVIDADE, MAS EXISTE) ---
+    # --- FILTROS STREAMLIT NATIVOS ---
     col1, col2, col3 = st.columns([1, 1, 1])
 
     entidades = ['Todas'] + sorted(df_base_pivot['Entidade de Consolidação'].unique().tolist())
@@ -108,6 +100,7 @@ if df_base_pivot is not None:
     meses = ['Todos'] + sorted(df_base_pivot['Mês/Ano'].unique().tolist(), key=lambda x: pd.to_datetime(x, format='%m/%Y'))
     mes_selecionado = col2.selectbox('Selecione o Mês/Ano', meses)
 
+    # Lógica de Filtragem
     df_filtrado = df_base_pivot.copy() 
 
     if entidade_selecionada != 'Todas':
@@ -116,12 +109,93 @@ if df_base_pivot is not None:
     if mes_selecionado != 'Todos':
         df_filtrado = df_filtrado[df_filtrado['Mês/Ano'] == mes_selecionado]
 
+    # Recalcula os totais (KPI Principal)
     total_pedidos = df_filtrado['PKI Pedidos'].sum()
     col3.metric(label="Total de Pedidos Únicos", value=f"{total_pedidos:,.0f}".replace(",", "#").replace(".", ",").replace("#", "."))
 
     st.markdown("---")
     
-    # Geração e Exibição da Tabela Pivotada (Pandas Nativo)
+    # ====================================================
+    # NOVO BLOCO 1: FRAMES DE TOTAIS POR MÊS (Mantido)
+    # ====================================================
+
+    if not df_filtrado.empty:
+        st.subheader("🚀 Total de Pedidos por Mês (KPIs Dinâmicos)")
+
+        df_monthly_totals = df_filtrado.groupby('Mês/Ano')['PKI Pedidos'].sum().reset_index()
+        df_monthly_totals.columns = ['Mês/Ano', 'Total Pedidos']
+        
+        df_monthly_totals['Data Ordenacao'] = pd.to_datetime(df_monthly_totals['Mês/Ano'], format='%m/%Y')
+        df_monthly_totals = df_monthly_totals.sort_values('Data Ordenacao').drop(columns='Data Ordenacao')
+        
+        num_months = len(df_monthly_totals)
+        cols_per_row = 6 
+        
+        for i in range(0, num_months, cols_per_row):
+            current_months = df_monthly_totals.iloc[i:i + cols_per_row]
+            cols = st.columns(len(current_months))
+            
+            for j, row in current_months.iterrows():
+                month = row['Mês/Ano']
+                total = row['Total Pedidos']
+                
+                cols[current_months.index.get_loc(j)].metric(
+                    label=f"Total em {month}",
+                    value=f"{total:,.0f}".replace(",", "#").replace(".", ",").replace("#", ".")
+                )
+
+        st.markdown("---")
+
+        # ====================================================
+        # ✅ NOVO BLOCO 2: TOP 3 ENTIDADES POR MÊS (COLUNAS)
+        # ====================================================
+        
+        st.subheader("🏆 Top 3 Entidades por Mês")
+
+        # 1. Agrupar dados por Mês e Entidade
+        df_monthly_entity = df_filtrado.groupby(['Mês/Ano', 'Entidade de Consolidação'])['PKI Pedidos'].sum().reset_index()
+        df_monthly_entity.columns = ['Mês/Ano', 'Entidade', 'Total Pedidos']
+
+        month_order = df_monthly_totals['Mês/Ano'].tolist() # Usa a ordem de meses já calculada
+
+        # 2. Definir o layout de colunas
+        # Usaremos no máximo 4 colunas por linha para o Top 3 ficar legível
+        cols_per_row_top3 = 4
+        num_months_top3 = len(month_order)
+        
+        for i in range(0, num_months_top3, cols_per_row_top3):
+            # Seleciona os meses para a linha atual
+            current_month_batch = month_order[i:i + cols_per_row_top3]
+            
+            # Cria as colunas Streamlit
+            cols = st.columns(len(current_month_batch))
+            
+            for index, month in enumerate(current_month_batch):
+                
+                # Filtra dados para o mês atual
+                df_month = df_monthly_entity[df_monthly_entity['Mês/Ano'] == month]
+                
+                # Ordena e pega o Top 3
+                df_top3 = df_month.sort_values(by='Total Pedidos', ascending=False).head(3)
+                
+                # Formata o DataFrame para o display
+                df_top3_display = df_top3[['Entidade', 'Total Pedidos']].copy()
+                df_top3_display['Total Pedidos'] = df_top3_display['Total Pedidos'].apply(lambda x: f"{x:,.0f}".replace(",", "#").replace(".", ",").replace("#", "."))
+                
+                # Exibir na coluna atual
+                with cols[index]:
+                    st.markdown(f"**{month}**")
+                    st.dataframe(df_top3_display, 
+                                 use_container_width=True, 
+                                 hide_index=True,
+                                 # Define altura fixa para que colunas com menos de 3 itens não desequilibrem
+                                 height=180) 
+
+        st.markdown("---")
+        
+    # Geração e Exibição da Tabela Pivotada (Pandas Nativo) (Mantida)
+    # [Restante do código da Tabela Pivotada]
+
     if df_filtrado.empty:
         st.warning("Nenhum dado encontrado para a combinação de filtros selecionada.")
         df_pivot_final = pd.DataFrame() 
@@ -149,12 +223,9 @@ if df_base_pivot is not None:
 
     st.markdown("---")
     
-    # ----------------------------------------------------
-    # Botão de Download NATIVO XLSX (Dados Brutos)
-    # ----------------------------------------------------
+    # Botão de Download NATIVO XLSX (Dados Brutos) (Mantido)
     st.markdown("### 💾 Exportar Dados Brutos (Para Criar a Tabela Dinâmica no Excel)")
     
-    # Cria o arquivo XLSX com a função simplificada
     xlsx_data = to_excel(df_base_pivot)
 
     st.download_button(
