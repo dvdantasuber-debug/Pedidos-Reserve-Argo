@@ -12,8 +12,14 @@ ID_COL_NAME = 'pedido'
 GROUP_CODE_COL = 'codigo grupo' 
 EMP_COL_NAME = 'empresa' 
 GROUP_COL_NAME = 'nome grupo'
-BASE_FILE = 'base.csv' 
+# Define o nome do arquivo principal como EXCEL
+BASE_FILE = 'base.xlsx' 
 SEPARATOR = ',' 
+
+# Constantes para o mapeamento de Grupos
+GRUPO_SHEET_NAME = 'GRUPOS'
+GRUPO_MAPPING_CODE_COL = 'Codigo'
+GRUPO_MAPPING_NAME_COL = 'Nome do Grupo'
 
 # Define a cor laranja para a barra e texto
 ORANGE_COLOR = '#ff8c00' # Laranja escuro
@@ -21,7 +27,7 @@ ORANGE_COLOR = '#ff8c00' # Laranja escuro
 BACKGROUND_BAR_COLOR = '#e0e0e0' 
 
 # ----------------------------------------------------
-# Funções de Criação do Arquivo Excel Interativo (Mantida)
+# Funções de Criação do Arquivo Excel Interativo
 # ----------------------------------------------------
 
 def to_excel(df):
@@ -32,31 +38,80 @@ def to_excel(df):
     return output.getvalue()
 
 # ----------------------------------------------------
-# Leitura e Pré-Processamento (Cache Otimizado) (Mantida)
+# Leitura e Pré-Processamento (Cache Otimizado com Mapeamento)
 # ----------------------------------------------------
 
 @st.cache_data
 def load_and_clean_data():
-    """Lê, limpa, e pré-processa os dados base, gerando a base de pedidos únicos."""
+    """
+    Lê a base e a tabela de grupos do arquivo Excel, realiza o MERGE 
+    (VLOOKUP) com tratamento de tipos e pré-processa os dados.
+    """
     try:
-        df = pd.read_csv(
+        # 1. LEITURA DA BASE PRINCIPAL (Assumindo que a aba se chama 'base')
+        df = pd.read_excel(
             BASE_FILE, 
-            sep=SEPARATOR, 
+            sheet_name='base', # Assumindo que a aba de dados se chama 'base'
             header=None,  
             skiprows=1,   
             names=[DATE_COL_NAME, ID_COL_NAME, GROUP_CODE_COL, EMP_COL_NAME, GROUP_COL_NAME],
-            encoding='utf-8'
+            engine='openpyxl'
         )
         
+        # 2. LEITURA DA TABELA DE GRUPOS
+        df_grupos = pd.read_excel(
+            BASE_FILE,
+            sheet_name=GRUPO_SHEET_NAME, # Lendo a aba 'GRUPOS'
+            usecols=[GRUPO_MAPPING_CODE_COL, GRUPO_MAPPING_NAME_COL], 
+            engine='openpyxl'
+        )
+        
+        # --- PREPARAÇÃO DA CHAVE DE MERGE (Garantindo Consistência) ---
+        
+        # 2.1. Preparo da Tabela de Mapeamento (df_grupos)
+        df_grupos.rename(
+            columns={
+                GRUPO_MAPPING_CODE_COL: 'merge_key', 
+                GRUPO_MAPPING_NAME_COL: 'Nome_Grupo_Mapeado'
+            }, 
+            inplace=True
+        )
+        
+        # Tenta converter a chave de mapeamento para string limpa, tratando inteiros corretamente
+        df_grupos['merge_key'] = df_grupos['merge_key'].apply(
+            lambda x: str(int(x)) if pd.notna(x) and str(x).replace('.', '', 1).isdigit() else str(x)
+        ).str.strip() 
+
+        # 3. LIMPEZA E PREPARAÇÃO DA BASE PRINCIPAL (df)
         df[ID_COL_NAME] = df[ID_COL_NAME].astype(str).str.strip()
         df[EMP_COL_NAME] = df[EMP_COL_NAME].astype(str).str.strip()
-        df[GROUP_COL_NAME] = df[GROUP_COL_NAME].astype(str).str.strip().replace(['', 'nan', 'NaN'], np.nan) 
+        df[GROUP_COL_NAME] = df[GROUP_COL_NAME].astype(str).str.strip().replace(['', 'nan', 'NaN'], np.nan)
+        
+        # Tenta converter a chave da base principal para string limpa, tratando inteiros corretamente
+        df['merge_key'] = df[GROUP_CODE_COL].apply(
+            lambda x: str(int(x)) if pd.notna(x) and str(x).replace('.', '', 1).isdigit() else str(x)
+        ).str.strip()
+        
+        # 4. REALIZAR O MERGE (VLOOKUP)
+        df = pd.merge(
+            df,
+            df_grupos[['merge_key', 'Nome_Grupo_Mapeado']],
+            on='merge_key',
+            how='left'
+        )
+        
+        # 5. CONSOLIDAÇÃO DO NOME DO GRUPO
+        # Preenche a coluna 'nome grupo' original com o valor mapeado (Nome_Grupo_Mapeado).
+        df[GROUP_COL_NAME] = df['Nome_Grupo_Mapeado'].fillna(df[GROUP_COL_NAME])
+        
+        # 6. LIMPEZA FINAL E GERAÇÃO DA PKI
         df[DATE_COL_NAME] = pd.to_datetime(df[DATE_COL_NAME], errors='coerce', dayfirst=True)
-        df.dropna(subset=[DATE_COL_NAME], inplace=True)
+        df.dropna(subset=[DATE_COL_NAME], inplace=True) 
 
         if df.empty:
             return None
 
+        # Definição da Entidade de Consolidação FINAL
         df['Entidade de Consolidação'] = df[GROUP_COL_NAME].fillna(df[EMP_COL_NAME])
         df['Mês/Ano'] = df[DATE_COL_NAME].dt.strftime('%m/%Y')
         
@@ -71,7 +126,13 @@ def load_and_clean_data():
         return df_base_pivot
 
     except FileNotFoundError:
-        st.error(f"❌ ERRO FATAL: O arquivo '{BASE_FILE}' não foi encontrado.")
+        st.error(f"❌ ERRO FATAL: O arquivo '{BASE_FILE}' não foi encontrado. Verifique se ele se chama 'base.xlsx'.")
+        return None
+    except ValueError as e:
+        if "worksheet named" in str(e):
+             st.error(f"❌ ERRO FATAL: Não foi possível encontrar a aba principal ou a aba '{GRUPO_SHEET_NAME}' no arquivo '{BASE_FILE}'.")
+             return None
+        st.error(f"❌ ERRO FATAL ao processar o arquivo. Detalhe: {e}")
         return None
     except Exception as e:
         st.error(f"❌ ERRO FATAL ao processar o arquivo. Detalhe: {e}")
@@ -121,7 +182,7 @@ if df_base_pivot is not None:
     st.markdown("---")
     
     # ====================================================
-    # BLOCO 1: FRAMES DE TOTAIS POR MÊS (Mantido)
+    # BLOCO 1: FRAMES DE TOTAIS POR MÊS 
     # ====================================================
 
     if not df_filtrado.empty:
@@ -152,7 +213,7 @@ if df_base_pivot is not None:
         st.markdown("---")
 
         # ====================================================
-        # ✅ BLOCO 2: TOP 3 ENTIDADES POR MÊS (REVERTIDO PARA ALINHAMENTO À DIREITA)
+        # BLOCO 2: TOP 3 ENTIDADES POR MÊS (Alinhamento à Direita - Estável)
         # ====================================================
         
         st.subheader("🏆 Top 3 Entidades (Leaderboard Mensal por Quantidade)")
@@ -207,7 +268,7 @@ if df_base_pivot is not None:
                             # Formatação para o valor (tratando a pontuação)
                             formatted_value = f"{total_pedidos_entity:,.0f}".replace(",", "#").replace(".", ",").replace("#", ".")
                             
-                            # --- ESTRUTURA REVERTIDA: FLEXBOX COM flex-grow: 1 NA BARRA ---
+                            # --- ESTRUTURA FLEXBOX COM flex-grow: 1 NA BARRA ---
                             st.markdown(
                                 f"""
                                 <div style="
@@ -255,7 +316,7 @@ if df_base_pivot is not None:
 
         st.markdown("---")
         
-    # Geração e Exibição da Tabela Pivotada (Pandas Nativo) (Mantido)
+    # Geração e Exibição da Tabela Pivotada (Pandas Nativo) 
 
     if df_filtrado.empty:
         st.warning("Nenhum dado encontrado para a combinação de filtros selecionada.")
@@ -284,7 +345,7 @@ if df_base_pivot is not None:
 
     st.markdown("---")
     
-    # Botão de Download NATIVO XLSX (Dados Brutos) (Mantido)
+    # Botão de Download NATIVO XLSX (Dados Brutos) 
     st.markdown("### 💾 Exportar Dados Brutos (Para Criar a Tabela Dinâmica no Excel)")
     
     xlsx_data = to_excel(df_base_pivot)
