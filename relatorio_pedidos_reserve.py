@@ -15,6 +15,11 @@ GROUP_COL_NAME = 'nome grupo'
 BASE_FILE = 'base.csv' 
 SEPARATOR = ',' 
 
+# Define a cor laranja para a barra e texto
+ORANGE_COLOR = '#ff8c00' # Laranja escuro
+# Cor da barra de fundo (cinza claro)
+BACKGROUND_BAR_COLOR = '#e0e0e0' 
+
 # ----------------------------------------------------
 # Funções de Criação do Arquivo Excel Interativo (Mantida)
 # ----------------------------------------------------
@@ -116,7 +121,7 @@ if df_base_pivot is not None:
     st.markdown("---")
     
     # ====================================================
-    # NOVO BLOCO 1: FRAMES DE TOTAIS POR MÊS (Mantido)
+    # BLOCO 1: FRAMES DE TOTAIS POR MÊS (Mantido)
     # ====================================================
 
     if not df_filtrado.empty:
@@ -147,54 +152,110 @@ if df_base_pivot is not None:
         st.markdown("---")
 
         # ====================================================
-        # ✅ NOVO BLOCO 2: TOP 3 ENTIDADES POR MÊS (COLUNAS)
+        # ✅ BLOCO 2: TOP 3 ENTIDADES POR MÊS (REVERTIDO PARA ALINHAMENTO À DIREITA)
         # ====================================================
         
-        st.subheader("🏆 Top 3 Entidades por Mês")
+        st.subheader("🏆 Top 3 Entidades (Leaderboard Mensal por Quantidade)")
 
         # 1. Agrupar dados por Mês e Entidade
         df_monthly_entity = df_filtrado.groupby(['Mês/Ano', 'Entidade de Consolidação'])['PKI Pedidos'].sum().reset_index()
         df_monthly_entity.columns = ['Mês/Ano', 'Entidade', 'Total Pedidos']
 
-        month_order = df_monthly_totals['Mês/Ano'].tolist() # Usa a ordem de meses já calculada
+        month_order = df_monthly_totals['Mês/Ano'].tolist() 
 
-        # 2. Definir o layout de colunas
-        # Usaremos no máximo 4 colunas por linha para o Top 3 ficar legível
+        # 2. Definir o layout de colunas para os meses (4 por linha)
         cols_per_row_top3 = 4
         num_months_top3 = len(month_order)
         
         for i in range(0, num_months_top3, cols_per_row_top3):
-            # Seleciona os meses para a linha atual
             current_month_batch = month_order[i:i + cols_per_row_top3]
-            
-            # Cria as colunas Streamlit
             cols = st.columns(len(current_month_batch))
             
             for index, month in enumerate(current_month_batch):
                 
-                # Filtra dados para o mês atual
-                df_month = df_monthly_entity[df_monthly_entity['Mês/Ano'] == month]
-                
-                # Ordena e pega o Top 3
-                df_top3 = df_month.sort_values(by='Total Pedidos', ascending=False).head(3)
-                
-                # Formata o DataFrame para o display
-                df_top3_display = df_top3[['Entidade', 'Total Pedidos']].copy()
-                df_top3_display['Total Pedidos'] = df_top3_display['Total Pedidos'].apply(lambda x: f"{x:,.0f}".replace(",", "#").replace(".", ",").replace("#", "."))
-                
-                # Exibir na coluna atual
+                # Inicia o CARD (Retângulo) para o mês
                 with cols[index]:
-                    st.markdown(f"**{month}**")
-                    st.dataframe(df_top3_display, 
-                                 use_container_width=True, 
-                                 hide_index=True,
-                                 # Define altura fixa para que colunas com menos de 3 itens não desequilibrem
-                                 height=180) 
+                    st.markdown(
+                        f"""
+                        <div style="
+                            background-color: #f0f2f6; 
+                            border: 1px solid #e6e6e6; 
+                            border-radius: 8px; 
+                            padding: 15px; 
+                            margin-bottom: 20px;
+                            box-shadow: 0 4px 8px rgba(0,0,0,0.05);
+                        ">
+                            <h4 style="margin-top: 0; color: #1e81b0; text-align: center;">{month}</h4>
+                        """, unsafe_allow_html=True
+                    )
+                    
+                    # Filtra dados para o mês atual
+                    df_month = df_monthly_entity[df_monthly_entity['Mês/Ano'] == month]
+                    df_top3 = df_month.sort_values(by='Total Pedidos', ascending=False).head(3)
+                    
+                    if df_top3.empty:
+                        st.markdown("<p style='text-align: center; color: #888;'>S/Dados</p>", unsafe_allow_html=True)
+                    else:
+                        max_pedidos = df_top3['Total Pedidos'].max()
+                        
+                        for rank, (idx, row) in enumerate(df_top3.iterrows()):
+                            entity_name = row['Entidade']
+                            total_pedidos_entity = row['Total Pedidos']
+                            
+                            ratio = total_pedidos_entity / max_pedidos if max_pedidos > 0 else 0
+                            
+                            # Formatação para o valor (tratando a pontuação)
+                            formatted_value = f"{total_pedidos_entity:,.0f}".replace(",", "#").replace(".", ",").replace("#", ".")
+                            
+                            # --- ESTRUTURA REVERTIDA: FLEXBOX COM flex-grow: 1 NA BARRA ---
+                            st.markdown(
+                                f"""
+                                <div style="
+                                    margin-bottom: 5px; 
+                                    font-weight: bold; 
+                                    color: #333;
+                                ">
+                                    {rank + 1}º {entity_name}
+                                </div>
+                                <div style="
+                                    display: flex; 
+                                    align-items: center; 
+                                    gap: 10px; /* Espaço entre a barra e o valor */
+                                    margin-bottom: 10px;
+                                ">
+                                    <div style="
+                                        height: 16px; 
+                                        background-color: {BACKGROUND_BAR_COLOR}; 
+                                        border-radius: 5px; 
+                                        overflow: hidden; 
+                                        flex-grow: 1; /* FORÇA A BARRA A USAR TODO O ESPAÇO, EMPURRANDO O VALOR PARA A DIREITA */
+                                        position: relative;
+                                    ">
+                                        <div style="
+                                            width: {ratio * 100}%; 
+                                            height: 100%; 
+                                            background-color: {ORANGE_COLOR}; 
+                                            border-radius: 5px;
+                                            min-width: 5px; /* Evita que valores pequenos desapareçam */
+                                        "></div>
+                                    </div>
+                                    <span style="
+                                        color: {ORANGE_COLOR}; 
+                                        font-size: 0.9em; 
+                                        font-weight: bold;
+                                        white-space: nowrap; /* Impede que o número quebre linha */
+                                        flex-shrink: 0; /* Impede o número de encolher */
+                                    ">{formatted_value}</span>
+                                </div>
+                                """, unsafe_allow_html=True
+                            )
+                            
+                    # Fecha o CARD (Retângulo)
+                    st.markdown("</div>", unsafe_allow_html=True) 
 
         st.markdown("---")
         
-    # Geração e Exibição da Tabela Pivotada (Pandas Nativo) (Mantida)
-    # [Restante do código da Tabela Pivotada]
+    # Geração e Exibição da Tabela Pivotada (Pandas Nativo) (Mantido)
 
     if df_filtrado.empty:
         st.warning("Nenhum dado encontrado para a combinação de filtros selecionada.")
