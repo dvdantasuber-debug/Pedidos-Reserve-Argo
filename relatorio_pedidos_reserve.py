@@ -4,6 +4,7 @@ import numpy as np
 import io
 import xlsxwriter
 import base64
+import os 
 
 # --- 1. Configurações e Variáveis ---
 
@@ -12,33 +13,34 @@ ID_COL_NAME = 'pedido'
 GROUP_CODE_COL = 'codigo grupo'
 EMP_COL_NAME = 'empresa'
 GROUP_COL_NAME = 'nome grupo'
-# Define o nome do arquivo principal como EXCEL
 BASE_FILE = 'base.xlsx'
 SEPARATOR = ','
+LOGO_FILE = 'logo.png' # Arquivo da logomarca PNG
+MAX_LOGO_HEIGHT = '80px' # ✅ ALTURA MÁXIMA PARA O LOGO
 
 # Constantes para o mapeamento de Grupos
 GRUPO_SHEET_NAME = 'GRUPOS'
 GRUPO_MAPPING_CODE_COL = 'Codigo'
 GRUPO_MAPPING_NAME_COL = 'Nome do Grupo'
 
-# Define a cor laranja para a barra e texto
-ORANGE_COLOR = '#ff8c00' # Laranja escuro (Principal)
-# Cor da barra de fundo (cinza claro)
-BACKGROUND_BAR_COLOR = '#e0e0e0'
+# --- DEFINIÇÃO DE CORES ---
+ORANGE_COLOR = '#ff8c00' 
+BACKGROUND_COLOR_DARK_BLUE = '#131B36' 
+CONTRAST_BACKGROUND_COLOR = '#1D2A4A' 
 
 # Cores e estilos para a tabela customizada
 HEADER_COLOR = ORANGE_COLOR
 TOTALS_COLOR = ORANGE_COLOR
 HEADER_FONT_COLOR = 'white'
 TOTALS_FONT_COLOR = 'white'
-CONTENT_FONT_COLOR = ORANGE_COLOR # Conteúdo (valores) em laranja
+CONTENT_FONT_COLOR = ORANGE_COLOR 
 
-# Cor para o fundo da seção de Filtros/KPIs
-DARK_BACKGROUND_COLOR = '#333333' # Cinza escuro
+DARK_BACKGROUND_COLOR = CONTRAST_BACKGROUND_COLOR
 DARK_FONT_COLOR = 'white'
+BACKGROUND_BAR_COLOR = '#e0e0e0' 
 
 # ----------------------------------------------------
-# Funções de Criação do Arquivo Excel Interativo
+# Funções Auxiliares
 # ----------------------------------------------------
 
 def to_excel(df):
@@ -47,6 +49,23 @@ def to_excel(df):
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, sheet_name='Dados', index=False)
     return output.getvalue()
+
+def image_to_base64(file_path, file_type="png"):
+    """Lê um arquivo de imagem (PNG) e codifica em Base64 para HTML."""
+    if not os.path.exists(file_path):
+        return None, f"O arquivo {file_path} não foi encontrado."
+    
+    try:
+        with open(file_path, "rb") as f:
+            image_bytes = f.read()
+        
+        b64_encoded = base64.b64encode(image_bytes).decode('utf-8')
+        
+        # Retorna a string pronta para ser usada no src de uma tag <img>
+        return f"data:image/{file_type};base64,{b64_encoded}", None
+    except Exception as e:
+        return None, f"Erro ao processar a imagem: {e}"
+
 
 # ----------------------------------------------------
 # Leitura e Pré-processamento (Cache Otimizado com Mapeamento)
@@ -57,12 +76,13 @@ def load_and_clean_data():
     """
     Lê a base e a tabela de grupos do arquivo Excel, realiza o MERGE 
     (VLOOKUP) com tratamento de tipos e pré-processa os dados.
+    (Conteúdo da função omitido por ser idêntico ao anterior)
     """
     try:
         # 1. LEITURA DA BASE PRINCIPAL (Assumindo que a aba se chama 'base')
         df = pd.read_excel(
             BASE_FILE,
-            sheet_name='base', # Assumindo que a aba de dados se chama 'base'
+            sheet_name='base',
             header=None,
             skiprows=1,
             names=[DATE_COL_NAME, ID_COL_NAME, GROUP_CODE_COL, EMP_COL_NAME, GROUP_COL_NAME],
@@ -72,14 +92,12 @@ def load_and_clean_data():
         # 2. LEITURA DA TABELA DE GRUPOS
         df_grupos = pd.read_excel(
             BASE_FILE,
-            sheet_name=GRUPO_SHEET_NAME, # Lendo a aba 'GRUPOS'
+            sheet_name=GRUPO_SHEET_NAME,
             usecols=[GRUPO_MAPPING_CODE_COL, GRUPO_MAPPING_NAME_COL],
             engine='openpyxl'
         )
         
         # --- PREPARAÇÃO DA CHAVE DE MERGE (Garantindo Consistência) ---
-        
-        # 2.1. Preparo da Tabela de Mapeamento (df_grupos)
         df_grupos.rename(
             columns={
                 GRUPO_MAPPING_CODE_COL: 'merge_key',
@@ -88,7 +106,6 @@ def load_and_clean_data():
             inplace=True
         )
         
-        # Tenta converter a chave de mapeamento para string limpa, tratando inteiros corretamente
         df_grupos['merge_key'] = df_grupos['merge_key'].apply(
             lambda x: str(int(x)) if pd.notna(x) and str(x).replace('.', '', 1).isdigit() else str(x)
         ).str.strip()
@@ -98,7 +115,6 @@ def load_and_clean_data():
         df[EMP_COL_NAME] = df[EMP_COL_NAME].astype(str).str.strip()
         df[GROUP_COL_NAME] = df[GROUP_COL_NAME].astype(str).str.strip().replace(['', 'nan', 'NaN'], np.nan)
         
-        # Tenta converter a chave da base principal para string limpa, tratando inteiros corretamente
         df['merge_key'] = df[GROUP_CODE_COL].apply(
             lambda x: str(int(x)) if pd.notna(x) and str(x).replace('.', '', 1).isdigit() else str(x)
         ).str.strip()
@@ -112,7 +128,6 @@ def load_and_clean_data():
         )
         
         # 5. CONSOLIDAÇÃO DO NOME DO GRUPO
-        # Preenche a coluna 'nome grupo' original com o valor mapeado (Nome_Grupo_Mapeado).
         df[GROUP_COL_NAME] = df['Nome_Grupo_Mapeado'].fillna(df[GROUP_COL_NAME])
         
         # 6. LIMPEZA FINAL E GERAÇÃO DA PKI
@@ -122,7 +137,6 @@ def load_and_clean_data():
         if df.empty:
             return None
 
-        # Definição da Entidade de Consolidação FINAL
         df['Entidade de Consolidação'] = df[GROUP_COL_NAME].fillna(df[EMP_COL_NAME])
         df['Mês/Ano'] = df[DATE_COL_NAME].dt.strftime('%m/%Y')
         
@@ -155,8 +169,57 @@ def load_and_clean_data():
 
 st.set_page_config(layout="wide", page_title="Dashboard Pedidos Reserve")
 
+# --- AJUSTE GLOBAL DE COR DE FUNDO (BACKGROUND) E CSS GERAL ---
+st.markdown(
+    f"""
+    <style>
+    /* Altera o fundo da página inteira para o azul marinho escuro */
+    .stApp {{
+        background-color: {BACKGROUND_COLOR_DARK_BLUE};
+        color: white; 
+    }}
+    /* Garante que o texto principal fique branco (aplicado a títulos, labels, etc) */
+    h1, h2, h3, h4, h5, h6, .stMarkdown, label, [data-testid="stMetricLabel"] {{
+        color: white !important;
+    }}
+    
+    /* ✅ NOVO CSS PARA ALINHAMENTO E TAMANHO DA IMAGEM */
+    /* Alinha o conteúdo das colunas verticalmente */
+    [data-testid="column"] {{
+        display: flex;
+        flex-direction: column;
+        justify-content: center; 
+    }}
+    
+    /* Força o H1 a ter margem superior zero para subir o texto */
+    h1 {{
+        margin-top: 0px !important;
+    }}
+    
+    /* Estilo para a imagem injetada via Base64/HTML (usando uma classe customizada) */
+    .custom-logo-img {{
+        width: auto !important; /* Deixa a largura automática para manter a proporção */
+        height: 100% !important; /* Tenta preencher a altura da div pai */
+        max-height: {MAX_LOGO_HEIGHT} !important; /* Limita a altura máxima */
+        object-fit: contain; /* Garante que a imagem caiba sem cortar */
+        margin: 0px auto; /* Centraliza horizontalmente se a div for maior */
+    }}
+    
+    /* Estilo para a div que contém o logo (dá um espaço vertical onde a imagem vai crescer) */
+    .logo-container {{
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: {MAX_LOGO_HEIGHT}; /* Define a altura do container pai para o logo */
+    }}
+    </style>
+    """, 
+    unsafe_allow_html=True
+)
+
 df_base_pivot = load_and_clean_data()
 
+# --- CABEÇALHO COM LOGO E TÍTULO ---
 if df_base_pivot is not None:
     
     # Geração do Título Dinâmico
@@ -164,23 +227,46 @@ if df_base_pivot is not None:
     max_date = df_base_pivot['Mês/Ano'].max()
     dashboard_title = f"Pedidos Reserve - Período {min_date} a {max_date}"
     
-    st.title("📊 Dashboard de Pedidos - Visão Matriz")
-    st.markdown(f"### {dashboard_title}")
+    # Colunas para o logo e o título
+    logo_col, title_col = st.columns([1, 4])
     
-    # ====================================================
-    # ✅ BLOCO 2: FILTROS E KPI PRINCIPAL (FUNDO ESCURO E KPI CENTRALIZADO)
-    # ====================================================
+    # ✅ INSERÇÃO DO LOGO PNG COM INJEÇÃO HTML/BASE64 (Controle CSS total)
+    with logo_col:
+        img_base64_data, error = image_to_base64(LOGO_FILE, file_type="png")
+
+        if img_base64_data:
+            # Injeta o logo usando a tag <img> e a classe CSS customizada
+            st.markdown(
+                f"""
+                <div class="logo-container">
+                    <img src="{img_base64_data}" class="custom-logo-img" alt="Logomarca">
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+        else:
+            st.markdown(f"<p style='color: red; font-size: 0.8em;'>Erro ao carregar logo: {error}</p>", unsafe_allow_html=True)
+            
+    with title_col:
+        # st.title foi substituído por st.markdown com h1 para garantir o margin-top: 0px (definido no CSS)
+        st.markdown(f"<h1>📊 Dashboard de Pedidos - Visão Matriz</h1>", unsafe_allow_html=True)
+        st.markdown(f"### {dashboard_title}")
     
     st.markdown("---")
+    
+    # ====================================================
+    # BLOCO 2: FILTROS E KPI PRINCIPAL
+    # ====================================================
+    
+    # (Restante do código é idêntico ao anterior e omitido para brevidade)
     
     # Adiciona o estilo CSS para o container dos filtros e KPI
     st.markdown(
         f"""
         <style>
-        /* Procura o primeiro div que contém os widgets após o markdown "---" */
-        /* e aplica o estilo ao seu container pai, que é o st.container (ou similar) */
+        /* Fundo do Container de Filtros/KPI */
         div[data-testid="stVerticalBlock"]:nth-of-type(1) > div:nth-child(1) {{
-            background-color: {DARK_BACKGROUND_COLOR};
+            background-color: {DARK_BACKGROUND_COLOR}; /* Cor contrastante */
             padding: 15px 20px 5px 20px;
             border-radius: 10px;
             color: {DARK_FONT_COLOR};
@@ -190,17 +276,17 @@ if df_base_pivot is not None:
         div[data-testid="stVerticalBlock"]:nth-of-type(1) > div:nth-child(1) label,
         div[data-testid="stVerticalBlock"]:nth-of-type(1) > div:nth-child(1) [data-testid="stMetricLabel"] {{
             color: {DARK_FONT_COLOR} !important;
-            text-align: center; /* NOVO: Centraliza o label */
-            width: 100%; /* NOVO: Garante a largura total para centralização */
-            display: block; /* NOVO: Garante que o label se comporte como um bloco */
+            text-align: center; 
+            width: 100%; 
+            display: block; 
         }}
         /* Estiliza o valor do metric para destaque em laranja */
         div[data-testid="stVerticalBlock"]:nth-of-type(1) > div:nth-child(1) [data-testid="stMetricValue"] {{
             color: {ORANGE_COLOR} !important;
-            font-size: 3em !important; /* NOVO: Aumenta o tamanho da fonte */
-            text-align: center; /* NOVO: Centraliza o valor */
-            width: 100%; /* NOVO: Garante a largura total para centralização */
-            display: block; /* NOVO: Garante que o valor se comporte como um bloco */
+            font-size: 3em !important; 
+            text-align: center; 
+            width: 100%; 
+            display: block; 
         }}
         </style>
         """, 
@@ -228,14 +314,13 @@ if df_base_pivot is not None:
         # Recalcula os totais (KPI Principal)
         total_pedidos = df_filtrado['PKI Pedidos'].sum()
         
-        # O metric é colocado na terceira coluna
         with col3:
             st.metric(label="Total de Pedidos Únicos", value=f"{total_pedidos:,.0f}".replace(",", "#").replace(".", ",").replace("#", "."))
 
     st.markdown("---")
     
     # ====================================================
-    # BLOCO 1: FRAMES DE TOTAIS POR MÊS 
+    # BLOCO 1: FRAMES DE TOTAIS POR MÊS
     # ====================================================
 
     if not df_filtrado.empty:
@@ -269,10 +354,8 @@ if df_base_pivot is not None:
                             border-radius: 10px;
                             padding: 10px;
                             text-align: center;
-                            /* Sombra ainda mais sutil */
                             box-shadow: 0 1px 2px rgba(0,0,0,0.1); 
-                            /* Borda preta um pouco mais grossa */
-                            border: 2px solid #333333; /* Usando DARK_BACKGROUND_COLOR para a borda */
+                            border: 2px solid {BACKGROUND_COLOR_DARK_BLUE}; 
                             margin-bottom: 10px;
                         ">
                             <p style="
@@ -294,7 +377,7 @@ if df_base_pivot is not None:
         st.markdown("---")
 
         # ====================================================
-        # BLOCO 2: TOP 3 ENTIDADES POR MÊS 
+        # BLOCO 2: TOP 3 ENTIDADES POR MÊS
         # ====================================================
         
         st.subheader("🏆 Top 3 Entidades (Leaderboard Mensal por Quantidade)")
@@ -320,16 +403,14 @@ if df_base_pivot is not None:
                     st.markdown(
                         f"""
                         <div style="
-                            background-color: #f0f2f6;
-                            /* Borda preta um pouco mais grossa */
-                            border: 2px solid #333333; /* Usando DARK_BACKGROUND_COLOR para a borda */
+                            background-color: {CONTRAST_BACKGROUND_COLOR}; 
+                            border: 2px solid {BACKGROUND_COLOR_DARK_BLUE}; 
                             border-radius: 8px;
                             padding: 15px;
                             margin-bottom: 20px;
-                            /* Sombra ainda mais sutil */
                             box-shadow: 0 1px 2px rgba(0,0,0,0.05);
                         ">
-                            <h4 style="margin-top: 0; color: #1e81b0; text-align: center;">{month}</h4>
+                            <h4 style="margin-top: 0; color: white; text-align: center;">{month}</h4>
                         """, unsafe_allow_html=True
                     )
                     
@@ -357,14 +438,14 @@ if df_base_pivot is not None:
                                 <div style="
                                     margin-bottom: 5px;
                                     font-weight: bold;
-                                    color: #333;
+                                    color: white; 
                                 ">
                                     {rank + 1}º {entity_name}
                                 </div>
                                 <div style="
                                     display: flex;
                                     align-items: center;
-                                    gap: 10px; /* Espaço entre a barra e o valor */
+                                    gap: 10px; 
                                     margin-bottom: 10px;
                                 ">
                                     <div style="
@@ -400,7 +481,7 @@ if df_base_pivot is not None:
         st.markdown("---")
         
     # ====================================================
-    # BLOCO 3: TABELA PIVOTADA CUSTOMIZADA 
+    # BLOCO 3: TABELA PIVOTADA CUSTOMIZADA
     # ====================================================
 
     if df_filtrado.empty:
@@ -428,13 +509,18 @@ if df_base_pivot is not None:
             """Aplica a cor do texto Laranja em todas as células, exceto a última linha e coluna."""
             attr = f'color: {color}'
             
-            # Cria um DataFrame de estilos do mesmo tamanho, inicializado com strings vazias
             is_content = pd.DataFrame('', index=data.index, columns=data.columns)
             
-            # Define o estilo para todas as linhas, exceto a última (Total Geral)
-            # E todas as colunas, exceto a última (Total Geral)
-            is_content.iloc[:-1, :-1] = attr 
+            background_attr = f'background-color: white; color: black;'
+            background_attr_alt = f'background-color: #f0f2f6; color: black;'
             
+            for i in range(len(data)):
+                if i < len(data) - 1: # Exclui a linha de totais
+                    is_content.iloc[i, :-1] = background_attr if i % 2 == 0 else background_attr_alt
+
+            is_content.iloc[:-1, :-1] = is_content.iloc[:-1, :-1].apply(lambda x: x.replace(attr, ''))
+            is_content.iloc[:-1, :-1] = is_content.iloc[:-1, :-1].apply(lambda x: f'{x} color: black;')
+
             return is_content
 
         # --- DEFINIÇÃO DE ESTILOS CSS ---
@@ -444,7 +530,6 @@ if df_base_pivot is not None:
         
         # --- APLICAÇÃO DO ESTILO ---
         
-        # 1. Aplica o formato de número e a cor laranja ao conteúdo
         styled_df = df_pivot_final.style \
             .format("{:,.0f}") \
             .apply(highlight_content, color=CONTENT_FONT_COLOR, axis=None)
@@ -453,20 +538,12 @@ if df_base_pivot is not None:
         # 2. Aplica o estilo Laranja/Branco para TODOS os Cabeçalhos e Células de Totais
         styled_df = styled_df.set_table_styles(
             [
-                # Cabeçalhos de Coluna (Mês/Ano e Total Geral)
                 {'selector': 'th.col_heading', 'props': header_totals_css},
-                # Cabeçalhos de Linha (Entidade de Consolidação)
                 {'selector': 'th.row_heading', 'props': header_totals_css},
-                # Célula superior esquerda ('Entidade de Consolidação' no canto)
                 {'selector': 'th.index_name', 'props': header_totals_css},
-                
-                # Linha de Totais (Valores na última linha)
                 {'selector': 'tbody tr:last-child td', 'props': header_totals_css},
-                # Coluna de Totais (Valores na última coluna)
                 {'selector': 'td:last-child', 'props': header_totals_css},
-                # Célula de interseção no canto inferior direito
                 {'selector': 'tbody tr:last-child td:last-child', 'props': header_totals_css},
-
             ], overwrite=True
         )
 
