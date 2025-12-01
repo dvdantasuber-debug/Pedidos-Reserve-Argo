@@ -1,4 +1,4 @@
-# VERSÃO 10.1 - DASHBOARD COMPLETO COM INCREMENTO E FILTRO DE SISTEMA CORRIGIDO (FINAL)
+# VERSÃO 10.4 - DASHBOARD COMPLETO COM INCREMENTO E CARREGAMENTO AUTOMÁTICO DO ARGOIT (Ignora Arquivos Temporários)
 
 import streamlit as st
 import pandas as pd
@@ -7,6 +7,7 @@ import io
 import xlsxwriter
 import base64
 import os
+import glob 
 from datetime import datetime
 
 # --- 1. Configurações e Variáveis ---
@@ -27,14 +28,6 @@ MAX_LOGO_HEIGHT = '80px'
 # Arquivo de Saída Consolidado
 CONSOLIDATED_FILE = 'base_consolidada.xlsx'
 
-# Arquivos ARGOIT (ASSUMIR que estão na mesma pasta do script)
-ARGOIT_FILES = {
-    '07/2025': 'ARGO-JULHO-25.xlsx',
-    '08/2025': 'ARGO-AGOSTO-25.xlsx',
-    '09/2025': 'ARGO-SETEMBRO-25.xlsx',
-    '10/2025': 'ARGO-OUTUBRO-25.xlsx'
-}
-
 # Constantes para o mapeamento de Grupos (Reserve)
 GRUPO_SHEET_NAME = 'GRUPOS'
 GRUPO_MAPPING_CODE_COL = 'Codigo'
@@ -49,7 +42,7 @@ CONTRAST_BACKGROUND_COLOR = '#1D2A4A'
 DARK_BACKGROUND_COLOR = CONTRAST_BACKGROUND_COLOR
 
 # ----------------------------------------------------
-# Funções Auxiliares de Exportação e Imagem
+# Funções Auxiliares de Exportação e Imagem (CÓDIGO OMITIDO POR SER IDÊNTICO)
 # ----------------------------------------------------
 
 def to_excel(df):
@@ -59,6 +52,7 @@ def to_excel(df):
         df.to_excel(writer, sheet_name='Consolidado', index=False)
     return output.getvalue()
 
+# (Função to_excel_styled idêntica)
 def to_excel_styled(df_pivot):
     """Converte o DataFrame Pivotado para um buffer de memória XLSX aplicando estilos de totais."""
     output = io.BytesIO()
@@ -141,6 +135,7 @@ def image_to_base64(file_path, file_type="png"):
 # Leitura e Padronização das Bases de ORIGEM
 # ----------------------------------------------------
 
+# (Função load_reserve_data idêntica)
 def load_reserve_data(file_path):
     """Lê a base Reserve e a tabela de grupos, e atribui o nome do sistema."""
     try:
@@ -174,8 +169,24 @@ def load_reserve_data(file_path):
     except Exception as e:
         return pd.DataFrame(), f"Erro grave ao processar base Reserve: {e}"
 
-def load_argoit_data(file_map):
-    """Lê e concatena os arquivos mensais do ARGOIT."""
+def load_argoit_data():
+    """Lê e concatena *todos* os arquivos que contêm 'ARGO' no nome, ignorando arquivos temporários (~$)."""
+    
+    # 1. Encontra todos os arquivos que contêm 'ARGO' ou 'argo' no nome
+    argoit_file_paths = glob.glob('*ARGO*.xlsx') + glob.glob('*argo*.xlsx')
+    # Remove duplicatas
+    argoit_file_paths = sorted(list(set(argoit_file_paths)))
+    
+    # 2. FILTRA: Ignora arquivos temporários do Excel (que começam com ~$)
+    valid_argoit_files = [
+        f for f in argoit_file_paths if not os.path.basename(f).startswith('~$')
+    ]
+    
+    if not valid_argoit_files:
+        return pd.DataFrame(), "Nenhum arquivo ARGOIT válido (*ARGO*.xlsx, ignorando temporários) encontrado na pasta."
+        
+    st.info(f"Encontrados **{len(valid_argoit_files)}** arquivos ARGOIT para processar.")
+    
     all_argoit_data = []
     ARGOIT_MAPPING = {
         'Data Inclusao': DATE_COL_NAME, 'Numero da Solicitacao': ID_COL_NAME, 
@@ -183,24 +194,29 @@ def load_argoit_data(file_map):
     }
     COLS_TO_READ = list(ARGOIT_MAPPING.keys())
 
-    for month_year, file_path in file_map.items():
-        if not os.path.exists(file_path):
-            st.warning(f"⚠️ Aviso: Arquivo ARGOIT '{file_path}' para {month_year} não encontrado. Pulando.")
-            continue
+    for file_path in valid_argoit_files:
         try:
             # header=1 pois a linha 1 (índice 0) é vazia e a linha 2 (índice 1) contém o cabeçalho
             df_month = pd.read_excel(file_path, header=1, usecols=COLS_TO_READ, engine='openpyxl')
             df_month.rename(columns=ARGOIT_MAPPING, inplace=True)
-            # A data precisa ser lida corretamente, garantindo o formato dia/mês/ano
+            
+            # Converte a data, forçando o formato dia/mês/ano se necessário
             df_month[DATE_COL_NAME] = pd.to_datetime(df_month[DATE_COL_NAME], errors='coerce', dayfirst=True) 
             df_month.dropna(subset=[DATE_COL_NAME], inplace=True)
+            
             if df_month.empty: 
                 st.info(f"O arquivo '{file_path}' (ARGOIT) foi lido, mas está vazio após a limpeza de datas. Pulando.")
                 continue
+            
             df_month[SYSTEM_COL_NAME] = 'ARGOIT'
             required_cols = [DATE_COL_NAME, ID_COL_NAME, EMP_COL_NAME, GROUP_COL_NAME, SYSTEM_COL_NAME]
             df_month = df_month[required_cols].copy()
             all_argoit_data.append(df_month)
+            
+        except ValueError as ve:
+            # Captura erro comum quando o usecols não encontra a coluna (e.g. arquivo mal formatado)
+            st.error(f"❌ Erro de coluna no arquivo ARGOIT '{file_path}'. Verifique o cabeçalho. Detalhe: {ve}")
+            continue
         except Exception as e:
             st.error(f"❌ Erro ao ler arquivo ARGOIT '{file_path}': {type(e).__name__} - {e}")
             continue
@@ -212,7 +228,7 @@ def load_argoit_data(file_map):
     return df_argoit_combined, None
 
 # ----------------------------------------------------
-# CRIAÇÃO DA BASE CONSOLIDADA COM INCREMENTO
+# CRIAÇÃO DA BASE CONSOLIDADA COM INCREMENTO (CÓDIGO OMITIDO POR SER IDÊNTICO)
 # ----------------------------------------------------
 
 def create_and_save_consolidated_base():
@@ -238,7 +254,7 @@ def create_and_save_consolidated_base():
 
     # 2. CARREGAR NOVOS DADOS (RAW)
     df_reserve, error_r = load_reserve_data(BASE_RESERVE_FILE)
-    df_argoit, error_a = load_argoit_data(ARGOIT_FILES)
+    df_argoit, error_a = load_argoit_data() # Chamada automática
     if error_r: st.warning(f"Aviso Reserve: {error_r}")
     if error_a: st.warning(f"Aviso ARGOIT: {error_a}")
     
@@ -284,7 +300,11 @@ def create_and_save_consolidated_base():
             st.success(f"✅ Base consolidada **ATUALIZADA** salva com sucesso em **`{CONSOLIDATED_FILE}`**. Total de pedidos: {len(df_to_save):,.0f}")
             df_final_consolidated = df_to_save # Atualiza a variável com a versão salva e limpa
         except Exception as e:
-            st.error(f"❌ Erro ao salvar o arquivo consolidado. Verifique se ele não está aberto. Detalhe: {e}")
+            # MENSAGEM DE ERRO ESPECÍFICA PARA PERMISSÃO NEGADA AQUI É CRUCIAL
+            if "[Errno 13] Permission denied" in str(e):
+                st.error(f"❌ Erro ao salvar o arquivo consolidado: **PERMISSÃO NEGADA**. Por favor, **FECHE O ARQUIVO `{CONSOLIDATED_FILE}`** se estiver aberto no Excel e tente novamente.")
+            else:
+                st.error(f"❌ Erro ao salvar o arquivo consolidado. Verifique se ele não está aberto. Detalhe: {e}")
             return pd.DataFrame()
     else:
         st.info(f"ℹ️ Base consolidada não foi alterada. Nenhum pedido novo encontrado. Total de pedidos: {total_rows_final:,.0f}")
@@ -320,7 +340,7 @@ def load_and_clean_data():
     return df_final_consolidated, df_base_pivot # Retorna a base completa e a base para pivotar
 
 # ----------------------------------------------------
-# --- 2. Interface Streamlit ---
+# --- 2. Interface Streamlit (CÓDIGO OMITIDO POR SER IDÊNTICO) ---
 # ----------------------------------------------------
 
 st.set_page_config(layout="wide", page_title="Dashboard Pedidos Consolidado")
@@ -391,7 +411,7 @@ if df_base_pivot is not None and not df_base_pivot.empty:
         with logo_col: st.warning("Logo não carregada.")
             
     with title_col:
-        st.markdown(f"<h1>📊 Dashboard de Pedidos - Visão Consolidada (V10.1)</h1>", unsafe_allow_html=True)
+        st.markdown(f"<h1>📊 Dashboard de Pedidos - Visão Consolidada (V10.4)</h1>", unsafe_allow_html=True)
         st.markdown(f"### {dashboard_title}")
     
     st.markdown("---")
@@ -594,10 +614,8 @@ if df_base_pivot is not None and not df_base_pivot.empty:
                                 system = sys_row['Sistema']
                                 total_sys = sys_row['Total Pedidos']
                                 
-                                # A barra de progresso usa a proporção do total da Entidade / Pedidos Totais MÁXIMOS
+                                # A barra de progresso usa a proporção do total do Sistema em relação ao total do MÁXIMO do top 3.
                                 if max_pedidos_visual > 0:
-                                    # Largura é (total do sistema / total da Entidade) * (total da Entidade / max_pedidos) * 100
-                                    # Simplificando, é a proporção do sistema em relação ao máximo do top 3.
                                     width_percent = (total_sys / max_pedidos_visual) * 100 
                                 else:
                                     width_percent = 0
@@ -706,7 +724,7 @@ if df_base_pivot is not None and not df_base_pivot.empty:
                 st.download_button(
                     label="📥 Download Base Consolidada",
                     data=xlsx_data,
-                    file_name=f"INCREMENTAL_V10.1_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    file_name=f"INCREMENTAL_V10.4_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
                     mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
                 )
             else:
